@@ -11,6 +11,7 @@
  * Author: Brett Nicholas
  */
 #include <openssl/engine.h>
+#include <openssl/rsa.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,16 +29,19 @@
 #define FAIL -1
 #define SUCCESS 1
 
-static const char *engine_id = "wsrsa";
+static const char *engine_id = "  wsrsa";
 static const char *engine_name = "A test engine for the ws rsa hardware encryption module, on the Xilinx ZYNQ7000";
 
 static int wsrsaengine_rsa_init(RSA *rsa);
 static int wsrsaengine_rsa_public_enc(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding);
 static int wsrsaengine_rsa_public_dec(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding);
 static int wsrsaengine_rsa_mod_exp(BIGNUM *r0, const BIGNUM *I, RSA *rsa, BN_CTX *ctx);
+static int wsrsaengine_bn_mod_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, const BIGNUM *m, BN_CTX *ctx, BN_MONT_CTX *m_ctx);
 static int wsrsaengine_rsa_private_enc(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding);
 static int wsrsaengine_rsa_private_dec(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding);
 static int wsrsaengine_rsa_finish(RSA *rsa);
+
+static const RSA_METHOD *default_rsa_meth;
 
 //
 // Create our own RSA method matching that of the OpenSSL RSA_METH 
@@ -91,24 +95,24 @@ static int wsrsaengine_rsa_finish(RSA *rsa);
 //       */
 //      int (*rsa_keygen) (RSA *rsa, int bits, BIGNUM *e, BN_GENCB *cb);
 //  };
-static const RSA_METHOD wsrsaengine_rsa_method = 
+static RSA_METHOD wsrsaengine_rsa_method = 
 {
-	"WSRSA1024 method",
-	wsrsaengine_rsa_public_enc,
-	wsrsaengine_rsa_public_dec,
-	wsrsaengine_rsa_private_enc, // int (*rsa_priv_enc)
-	wsrsaengine_rsa_private_dec, // int (*rsa_priv_dec)
-	wsrsaengine_rsa_mod_exp,
-	NULL, // int (*bn_mod_exp)
-	wsrsaengine_rsa_init,
-	wsrsaengine_rsa_finish,		
+	"wsRSA1024 method",
+	NULL,//wsrsaengine_rsa_public_enc,
+	NULL,//wsrsaengine_rsa_public_dec,
+	NULL,//wsrsaengine_rsa_private_enc, // int (*rsa_priv_enc)
+	NULL,//wsrsaengine_rsa_private_dec, // int (*rsa_priv_dec)
+	wsrsaengine_rsa_mod_exp, // Called for private key operations
+	wsrsaengine_bn_mod_exp,  // Called for public key operations
+	NULL,//wsrsaengine_rsa_init,
+	NULL,//wsrsaengine_rsa_finish,		
 /* NOTE ON THE FOLLOWING FIELD: RSA_FLAG_EXT_PKEY
  * This flag means the private key operations will be handled by rsa_mod_exp
  * and that they do not depend on the private key components being present:
  * for example a key stored in external hardware. Without this flag
  * bn_mod_exp gets called when private key components are absent.
  */
-	RSA_FLAG_EXT_PKEY, 			// int flags
+    RSA_FLAG_EXT_PKEY, // RSA_FLAG_CACHE_PUBLIC|RSA_FLAG_CACHE_PRIVATE
 	NULL,						// char *app_data
 	NULL,						// int (*rsa_sign)
 	NULL,						// int (*rsa_verify)
@@ -123,8 +127,8 @@ static int wsrsaengine_rsa_init(RSA *rsa)
 {
    	// Initialize hardware  
     
-    printf("wsrsaengine_rsa_init()\n");
-	return SUCCESS;
+    printf("  wsrsaengine_rsa_init()\n");
+	return default_rsa_meth->init(rsa);
 }
 
 
@@ -135,8 +139,9 @@ static int wsrsaengine_rsa_init(RSA *rsa)
 static int wsrsaengine_rsa_finish(RSA *rsa)
 {
 	// what should we do here? 
-    printf("wsrsaengine_rsa_finish()\n");
-	return SUCCESS;
+    printf("  wsrsaengine_rsa_finish()\n");
+	//return SUCCESS;
+    return default_rsa_meth->finish(rsa);
 }
 
 
@@ -145,8 +150,9 @@ static int wsrsaengine_rsa_finish(RSA *rsa)
  */
 static int wsrsaengine_rsa_public_enc(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding)
 {
-    printf("wsrsaengine_rsa_public_enc()\n");
+    printf("  wsrsaengine_rsa_public_enc()\n");
     return SUCCESS;
+    //return default_rsa_meth->rsa_pub_enc(flen, from, to, rsa, padding);
 }
 
 
@@ -155,8 +161,9 @@ static int wsrsaengine_rsa_public_enc(int flen, const unsigned char *from, unsig
  */
 static int wsrsaengine_rsa_public_dec(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding)
 {
-    printf("wsrsaengine_rsa_public_dec()\n");
+    printf("  wsrsaengine_rsa_public_dec()\n");
     return SUCCESS;
+    //return default_rsa_meth->rsa_pub_dec(flen, from, to, rsa, padding);
 }
 
 
@@ -165,8 +172,9 @@ static int wsrsaengine_rsa_public_dec(int flen, const unsigned char *from, unsig
  */
 static int wsrsaengine_rsa_private_enc(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding)
 {
-    printf("wsrsaengine_rsa_private_enc()\n");
+    printf("  wsrsaengine_rsa_private_enc()\n");
     return SUCCESS;
+    //return default_rsa_meth->rsa_priv_enc(flen, from, to, rsa, padding);
 }
 
 
@@ -175,8 +183,9 @@ static int wsrsaengine_rsa_private_enc(int flen, const unsigned char *from, unsi
  */
 static int wsrsaengine_rsa_private_dec(int flen, const unsigned char *from, unsigned char *to, RSA *rsa, int padding)
 {
-    printf("wsrsaengine_rsa_private_dec()\n");    
+    printf("  wsrsaengine_rsa_private_dec()\n");    
     return SUCCESS;
+    //return default_rsa_meth->rsa_priv_dec(flen, from, to, rsa, padding);
 }
 
 
@@ -185,8 +194,28 @@ static int wsrsaengine_rsa_private_dec(int flen, const unsigned char *from, unsi
  */
 static int wsrsaengine_rsa_mod_exp(BIGNUM *r0, const BIGNUM *I, RSA *rsa, BN_CTX *ctx)
 {
-    printf("wsrsaengine_rsa_mod_exp()\n");
-    return SUCCESS;
+    printf("  wsrsaengine_rsa_mod_exp()\n");
+    if (rsa->meth == NULL)
+        printf("    null method\n");
+    if (rsa->engine == NULL)
+        printf("    null engine\n");
+    if (rsa->n == NULL)
+        printf("    null n\n");
+    if (rsa->e == NULL)
+        printf("    null e\n");
+    if (rsa->d == NULL)
+        printf("    null d\n");
+    if (rsa->p == NULL)
+        printf("    null p\n");
+    if (rsa->q == NULL)
+        printf("    null q\n");
+    return default_rsa_meth->rsa_mod_exp(r0,I,rsa,ctx);
+}
+
+static int wsrsaengine_bn_mod_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, const BIGNUM *m, BN_CTX *ctx, BN_MONT_CTX *m_ctx)
+{
+    printf("  wsrsaengine_bn_mod_exp()\n");
+    return default_rsa_meth->bn_mod_exp(r,a,p,m,ctx,m_ctx);
 }
 
 
@@ -195,7 +224,7 @@ static int wsrsaengine_rsa_mod_exp(BIGNUM *r0, const BIGNUM *I, RSA *rsa, BN_CTX
  */
 int wsrsaengine_init(ENGINE *e)
 {
-    printf("wsrsaengine_init()\n");
+    printf("  wsrsaengine_init()\n");
     return SUCCESS;
 }
 
@@ -205,7 +234,7 @@ int wsrsaengine_init(ENGINE *e)
  */
 int wsrsaengine_finish(ENGINE *e)
 {
-    printf("wsrsaengine_finish()\n");
+    printf("  wsrsaengine_finish()\n");
     return SUCCESS;
 }
 
@@ -242,6 +271,16 @@ static int bind(ENGINE *e, const char *id)
 		fprintf(stderr,"ENGINE_set_RSA failed\n");
 		goto end;
 	}
+
+    
+    default_rsa_meth = RSA_PKCS1_SSLeay();
+    wsrsaengine_rsa_method.rsa_pub_enc = default_rsa_meth->rsa_pub_enc;
+    wsrsaengine_rsa_method.rsa_pub_dec = default_rsa_meth->rsa_pub_dec;
+    wsrsaengine_rsa_method.rsa_priv_enc = default_rsa_meth->rsa_priv_enc;
+    wsrsaengine_rsa_method.rsa_priv_dec = default_rsa_meth->rsa_priv_dec;
+    wsrsaengine_rsa_method.init= default_rsa_meth->init;
+    wsrsaengine_rsa_method.finish = default_rsa_meth->finish;
+
 	ret = SUCCESS; 
 end: 
 	return ret; 
